@@ -273,7 +273,7 @@ def book_reservation(data: Dict[str, Any]) -> Dict[str, Any]:
         booker.close()
 
 
-
+"""
 # Example usage
 if __name__ == "__main__":
     test_data = {
@@ -287,3 +287,4 @@ if __name__ == "__main__":
     }
     print(book_reservation(test_data))
     #book_reservation_testing(test_data)
+"""
