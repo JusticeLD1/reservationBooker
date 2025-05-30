@@ -148,29 +148,10 @@ class OpenTableBooker:
         self.page.keyboard.press("Enter")
         time.sleep(1)
 
-        # 7. Click on the restaurant image using coordinates
-        image_elem = self.page.query_selector('img[alt*="' + restaurant_name + '" i]')
-        if image_elem:
-            box = image_elem.bounding_box()
-            if box:
-                x = box['x'] + box['width'] / 2
-                y = box['y'] + box['height'] / 2
-                logger.info(f"Clicking at coordinates ({x}, {y}) on restaurant image.")
-                self.page.mouse.click(x, y)
-                self.page.wait_for_load_state("networkidle")
-                time.sleep(2)
-                return self.page.url
-            else:
-                logger.warning("Could not get bounding box for restaurant image.")
-        else:
-            logger.warning(f"Could not find image for restaurant '{restaurant_name}'.")
-
-        logger.warning(f"No matching restaurant image found for '{restaurant_name}'")
         
-
-        return None
+        return True
     
-    async def confirm_reservation(self, phone: str, email: str, time: str) -> bool:
+    def confirm_reservation(self, phone: str, email: str, time: str) -> bool:
         """
         Confirm the reservation with the given phone and email
         """
@@ -182,14 +163,55 @@ class OpenTableBooker:
         # Wait for the time slot button to be visible and interactive
         time_selector = f'a[title="{time_12h}"]'
         try:
-            await self.page.wait_for_selector(time_selector, state="visible", timeout=5000)
-            await self.page.click(time_selector)
+            self.page.wait_for_selector(time_selector, state="visible", timeout=5000)
+            self.page.click(time_selector)
             print(f"Clicked time slot button for {time_12h}")
-            return True
+            time_clicked = True
+            # Wait for the page to load after clicking the time slot
+            self.page.wait_for_load_state("networkidle")
         except Exception as e:
             print(f"Could not select time slot {time_12h}: {e}")
             return False
-    
+
+        if time_clicked:
+            # Wait for the phone input to be visible and interactive
+            phone_input = self.page.query_selector('input[name="phone"]')
+            if phone_input:
+                phone_input.fill(phone)
+                print(f"Inputted phone: {phone}")
+        
+            return True
+        
+    def input_info(self, phone: str, email: str) -> bool:
+        """
+        Input the phone and email into the reservation form
+        """
+        try:
+            # Wait for and fill in phone number
+            phone_input = self.page.wait_for_selector('#phoneNumber', state='visible', timeout=5000)
+            if phone_input:
+                phone_input.fill(phone)
+                logger.info(f"Successfully input phone number: {phone}")
+                
+                # Click the complete reservation button
+                complete_button = self.page.wait_for_selector('#complete-reservation', state='visible', timeout=5000)
+                if complete_button:
+                    complete_button.click()
+                    logger.info("Clicked complete reservation button")
+                    
+                    # Wait for the page to load after clicking
+                    self.page.wait_for_load_state('networkidle')
+                    time.sleep(15)  # Additional small delay to ensure page loads completely
+                    return True
+                else:
+                    logger.error("Could not find complete reservation button")
+                    return False
+            else:
+                logger.error("Could not find phone number input field")
+                return False
+        except Exception as e:
+            logger.error(f"Error in reservation process: {str(e)}")
+            return False
 
 def book_reservation(data: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -219,9 +241,23 @@ def book_reservation(data: Dict[str, Any]) -> Dict[str, Any]:
         )
         if restaurant_url:
             booking_confirmation = booker.confirm_reservation(data["phone"], data["email"], data['time'])
-            print("search successful, now booking")
-        if booking_confirmation:
-            print("booking successful")
+            if booking_confirmation:
+                info_inputted = booker.input_info(data["phone"], data["email"])
+                if info_inputted:
+                    return {
+                        "success": True,
+                        "message": "Reservation booked successfully"
+                    }
+                else:
+                    return {
+                        "success": False,
+                        "error": "Failed to input phone and email"
+                    }
+            else:
+                return {
+                    "success": False,
+                    "error": "Failed to confirm reservation"
+                }
         else:
             return {
                 "success": False,
