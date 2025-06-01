@@ -2,7 +2,7 @@ from parse_reservation import parse_reservation_request
 from book_opentable import book_reservation
 
 def main():
-    user_input = input("Enter your reservation request: ")
+    user_input = "make me a reservation at the restaurant called Nobu in Los Angeles for 4 people on 2025-05-20 at 18:00 phone number is 1234567890 email is test@test.com"
 
     print("\n Parsing your request...\n")
     data = parse_reservation_request(user_input)
