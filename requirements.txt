@@ -5,3 +5,9 @@ uvicorn==0.29.0
 python-dotenv==1.0.0
 pydantic==2.5.0
 requests==2.31.0
+python-multipart==0.0.7
+sqlalchemy==2.0.27
+passlib[bcrypt]==1.7.4
+python-jose[cryptography]==3.3.0
+alembic==1.13.1
+stripe==7.11.0

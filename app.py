@@ -1,16 +1,23 @@
-from fastapi import FastAPI, BackgroundTasks, HTTPException
+from fastapi import FastAPI, BackgroundTasks, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
 import uuid
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 import json
+from sqlalchemy.orm import Session
 
 # Import your existing functions
 from parse_reservation import parse_reservation_request
 from book_opentable import book_reservation
+from database import get_db, User
+from auth import (
+    UserCreate, UserResponse, Token, create_access_token,
+    get_current_active_user, ACCESS_TOKEN_EXPIRE_MINUTES
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -256,6 +263,51 @@ async def health_check():
         "timestamp": datetime.now(),
         "active_bookings": len([s for s in booking_sessions.values() if s["status"] == "in_progress"])
     }
+
+# User management endpoints
+@app.post("/users/", response_model=UserResponse)
+async def create_user(user: UserCreate, db: Session = Depends(get_db)):
+    db_user = db.query(User).filter(User.email == user.email).first()
+    if db_user:
+        raise HTTPException(
+            status_code=400,
+            detail="Email already registered"
+        )
+    
+    hashed_password = User.get_password_hash(user.password)
+    db_user = User(
+        email=user.email,
+        name=user.name,
+        phone_number=user.phone_number,
+        hashed_password=hashed_password
+    )
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+    return db_user
+
+@app.post("/token", response_model=Token)
+async def login_for_access_token(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: Session = Depends(get_db)
+):
+    user = db.query(User).filter(User.email == form_data.username).first()
+    if not user or not user.verify_password(form_data.password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.email}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
+
+@app.get("/users/me/", response_model=UserResponse)
+async def read_users_me(current_user: User = Depends(get_current_active_user)):
+    return current_user
 
 if __name__ == "__main__":
     import uvicorn

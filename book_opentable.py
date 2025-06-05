@@ -5,6 +5,7 @@ import json
 from typing import Optional, Dict, Any
 import logging
 from datetime import datetime
+from book_resy import book_resy
 
 # Configure logging
 logging.basicConfig(
@@ -72,14 +73,6 @@ class OpenTableBooker:
         self.page.wait_for_load_state("networkidle")
         time.sleep(2)
 
-        # 2. Type "restaurant + location" in the search bar and submit
-        search_term = restaurant_name if not location else f"{restaurant_name} {location}"
-        search_input = self.page.query_selector('input[placeholder*="Location, Restaurant, or Cuisine"]')
-        if not search_input:
-            logger.error("Could not find the search input on OpenTable homepage.")
-            return None
-        search_input.fill(search_term)
-        time.sleep(1)
 
         # 3. Set party size
         party_selectors = [
@@ -100,26 +93,189 @@ class OpenTableBooker:
         if not party_dropdown:
             logger.warning("Could not find party size dropdown with any selector.")
 
-        # 4. Set date
-        date_selectors = [
-            '#search-autocomplete-day-picker',
-            '[data-test="day-picker"]',
-            '[data-testid="day-picker-overlay"]',
-            '[aria-label="Date selector"]'
-        ]
-        date_input = None
-        for selector in date_selectors:
-            date_input = self.page.query_selector(selector)
-            if date_input:
+        # 4. Set date using calendar widget
+        try:
+            # Parse the target date from date_str (e.g., "June,5,2025" -> June 5, 2025)
+            date_parts = date_str.split(',')
+            if len(date_parts) == 3:
+                target_month_name = date_parts[0].strip()  # e.g., "June"
+                target_day = int(date_parts[1].strip())  # e.g., 5
+                target_year = int(date_parts[2].strip())  # e.g., 2025
+            else:
+                logger.error(f"Invalid date format: {date_str}. Expected format: 'Month,Day,Year'")
+                return
+            
+            logger.info(f"Setting date to {target_month_name} {target_day}, {target_year}")
+            
+            # Find and click the date input to open calendar widget
+            date_input_selectors = [
+                '#search-autocomplete-day-picker-label',
+                'button[data-test="date-selector"]',
+                'input[placeholder*="Date"]',
+                'button[aria-label*="Date"]',
+                '[data-testid="date-picker-trigger"]',
+                'button[class*="date"]',
+                'button[data-test="date-picker-trigger"]',
+                'button[aria-label*="Select date"]',
+                'button[class*="date-picker"]',
+                'div[class*="date-picker"] button',
+                'button:has-text("Select Date")',
+                'button:has-text("Choose Date")',
+                'button:has-text("Pick Date")'
+            ]
+            
+            date_input_clicked = False
+            for selector in date_input_selectors:
                 try:
-                    date_input.fill(date_str)
-                    logger.info(f"Date set to {date_str} using selector {selector}.")
-                    break
+                    # Wait for the element to be visible
+                    date_input = self.page.wait_for_selector(selector, state="visible", timeout=5000)
+                    if date_input:
+                        # Try to click the element
+                        date_input.click()
+                        logger.info(f"Clicked date input using selector: {selector}")
+                        time.sleep(1)  # Wait for calendar to open
+                        
+                        # Verify calendar opened by checking for calendar elements
+                        calendar_indicators = [
+                            'div[aria-live="polite"][role="presentation"]',
+                            '[data-test="calendar-header"]',
+                            '.calendar-header',
+                            'div[class*="month"][class*="year"]'
+                        ]
+                        
+                        for indicator in calendar_indicators:
+                            try:
+                                if self.page.wait_for_selector(indicator, state="visible", timeout=2000):
+                                    date_input_clicked = True
+                                    logger.info("Calendar successfully opened")
+                                    break
+                            except:
+                                continue
+                        
+                        if date_input_clicked:
+                            break
                 except Exception as e:
-                    logger.warning(f"Failed to set date with {selector}: {e}")
-        if not date_input:
-            logger.warning("Could not find date input with any selector.")
-
+                    logger.warning(f"Failed to click date input with {selector}: {e}")
+                    continue
+            
+            if not date_input_clicked:
+                # Try one last approach - look for any clickable element that might be the date picker
+                try:
+                    # Look for elements that might contain date-related text
+                    date_elements = self.page.query_selector_all('button, input, div[role="button"]')
+                    for element in date_elements:
+                        try:
+                            text = element.text_content().strip().lower()
+                            if any(date_term in text for date_term in ['date', 'calendar', 'pick date', 'select date']):
+                                element.click()
+                                logger.info("Clicked potential date input element")
+                                time.sleep(1)
+                                
+                                # Verify calendar opened
+                                if self.page.query_selector('div[aria-live="polite"][role="presentation"]'):
+                                    date_input_clicked = True
+                                    logger.info("Calendar successfully opened")
+                                    break
+                        except:
+                            continue
+                except Exception as e:
+                    logger.warning(f"Failed in final date input attempt: {e}")
+            
+            if not date_input_clicked:
+                logger.error("Could not find or click date input to open calendar")
+                return
+            
+            # Navigate to target month/year
+            max_navigation_attempts = 24  # Prevent infinite loops (max 2 years ahead)
+            navigation_attempts = 0
+            
+            while navigation_attempts < max_navigation_attempts:
+                try:
+                    # Find current month/year display using the most reliable selector first
+                    current_month_year = None
+                    month_year_element = self.page.query_selector('div[aria-live="polite"][role="presentation"]')
+                    if month_year_element:
+                        current_month_year = month_year_element.text_content().strip()
+                    
+                    if not current_month_year:
+                        # Fallback to other selectors if the primary one fails
+                        for selector in ['[data-test="calendar-header"]', '.calendar-header', 'div[class*="month"][class*="year"]']:
+                            element = self.page.query_selector(selector)
+                            if element:
+                                current_month_year = element.text_content().strip()
+                                break
+                    
+                    if not current_month_year:
+                        logger.warning("Could not find current month/year display")
+                        break
+                    
+                    logger.info(f"Current calendar shows: {current_month_year}")
+                    
+                    # Check if we're at the target month/year
+                    if target_month_name in current_month_year and str(target_year) in current_month_year:
+                        logger.info(f"Reached target month/year: {target_month_name} {target_year}")
+                        break
+                    
+                    # Click next month button - try the most specific selector first
+                    next_button = self.page.query_selector('button[aria-label*="Next month"]')
+                    if not next_button:
+                        # Fallback to other selectors
+                        for selector in ['button[class*="next"]', 'button.xlJIcF4HEgA-.hXVSeTEeYx', 'button[data-test="next-month"]', 'button:has-text(">")']:
+                            next_button = self.page.query_selector(selector)
+                            if next_button:
+                                break
+                    
+                    if next_button:
+                        next_button.click()
+                        logger.info("Clicked next month button")
+                        time.sleep(0.5)  # Wait for calendar to update
+                    else:
+                        logger.warning("Could not find next month button")
+                        break
+                    
+                    navigation_attempts += 1
+                    
+                except Exception as e:
+                    logger.error(f"Error during calendar navigation: {e}")
+                    break
+            
+            # Select the target day
+            try:
+                # First try to find the day using the most specific selector
+                day_button = self.page.query_selector(f'button[name="day"][aria-label*="{target_month_name} {target_day}"]')
+                
+                if not day_button:
+                    # Try other selectors if the specific one fails
+                    for selector in [
+                        f'button[name="day"]:has-text("{target_day}")',
+                        f'td button:has-text("{target_day}")',
+                        f'button[aria-label*="{target_day}"]'
+                    ]:
+                        day_buttons = self.page.query_selector_all(selector)
+                        for button in day_buttons:
+                            button_text = button.text_content().strip()
+                            aria_label = button.get_attribute('aria-label') or ''
+                            
+                            # Verify this is the correct day
+                            if button_text == str(target_day) or str(target_day) in aria_label:
+                                day_button = button
+                                break
+                        if day_button:
+                            break
+                
+                if day_button:
+                    day_button.click()
+                    logger.info(f"Successfully clicked day {target_day}")
+                    time.sleep(1)  # Wait for selection to register
+                    logger.info(f"Date successfully set to {target_month_name} {target_day}, {target_year}")
+                else:
+                    logger.warning(f"Could not find or click day {target_day}")
+                    
+            except Exception as e:
+                logger.error(f"Error selecting target day: {e}")
+                
+        except Exception as e:
+            logger.error(f"Error in date setting process: {e}")
         # 5. Set time
         time_selectors = [
             'select[data-test="time-picker"]',
@@ -142,6 +298,15 @@ class OpenTableBooker:
         if not time_dropdown:
             logger.warning("Could not find time dropdown with any selector.")
 
+        time.sleep(1)
+
+         # 2. Type "restaurant + location" in the search bar and submit
+        search_term = restaurant_name if not location else f"{restaurant_name} {location}"
+        search_input = self.page.query_selector('input[placeholder*="Location, Restaurant, or Cuisine"]')
+        if not search_input:
+            logger.error("Could not find the search input on OpenTable homepage.")
+            return None
+        search_input.fill(search_term)
         time.sleep(1)
 
         # 6. Click enter on keyboard
@@ -254,6 +419,7 @@ def book_reservation(data: Dict[str, Any]) -> Dict[str, Any]:
                         "error": "Failed to input phone and email"
                     }
             else:
+                return book_resy(data)
                 return {
                     "success": False,
                     "error": "Failed to confirm reservation"
@@ -277,9 +443,9 @@ def book_reservation(data: Dict[str, Any]) -> Dict[str, Any]:
 # Example usage
 if __name__ == "__main__":
     test_data = {
-        "restaurant": "Katana",
+        "restaurant": "didi75ei",
         "location": "Los Angeles",
-        "date": "2025-06-20",
+        "date": "June,16,2025",
         "time": "20:00",
         "party_size": 5,
         "phone": "1234567890",

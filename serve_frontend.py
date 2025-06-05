@@ -11,6 +11,9 @@ import webbrowser
 from pathlib import Path
 
 class CustomHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, directory=str(Path("frontend").absolute()), **kwargs)
+
     def end_headers(self):
         # Add CORS headers
         self.send_header('Access-Control-Allow-Origin', '*')
@@ -25,15 +28,16 @@ def serve_frontend(port=3000, open_browser=True):
     frontend_dir = Path("frontend")
     frontend_dir.mkdir(exist_ok=True)
     
-    # Change to frontend directory
-    os.chdir(frontend_dir)
+    # Create js directory if it doesn't exist
+    js_dir = frontend_dir / "js"
+    js_dir.mkdir(exist_ok=True)
     
     # Start server
     handler = CustomHTTPRequestHandler
     
     with socketserver.TCPServer(("", port), handler) as httpd:
         print(f"🌐 Frontend server starting at http://localhost:{port}")
-        print(f"📁 Serving files from: {os.getcwd()}")
+        print(f"📁 Serving files from: {frontend_dir.absolute()}")
         print("💡 Make sure your FastAPI backend is running on http://localhost:8000")
         print("\n🔧 To stop the server, press Ctrl+C")
         

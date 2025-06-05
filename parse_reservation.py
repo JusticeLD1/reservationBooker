@@ -17,17 +17,19 @@ openai.api_key = api_key
 def parse_reservation_request(prompt: str) -> dict:
     system_prompt = """
     You are a helpful assistant that extracts reservation information from natural language.
-    Return a JSON object with the following keys: restaurant, date, time, party_size, and location (if available), phone if available, email if available. use the restaurant_url to find the restaurant on opentable.com using the restaurant name and location.
+    Return a JSON object with the following keys: restaurant, date (change number format to month,day,year as in "June,5,2025"), time, party_size, and location (if available), phone if available, email if available. use the restaurant_url to find the restaurant on opentable.com using the restaurant name and location. First name and last name if left blank can be auto filled with the user's account info.
     Example:
     {
       "restaurant": "Nobu",
-      "date": "2025-05-17",
+      "date": "June,5,2025",
       "time": "19:00",
       "party_size": 2,
       "location": "Los Angeles",
       "phone": "1234567890",
       "email": "test@test.com",
-      "restaurant_url": "https://www.opentable.com/r/restuarantName-location"
+      "restaurant_url": "https://www.opentable.com/r/restuarantName-location",
+      "first_name": "John",
+      "last_name": "Doe"
     }
     """
 
