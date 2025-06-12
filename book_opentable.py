@@ -324,28 +324,35 @@ class OpenTableBooker:
         
         # Convert 24-hour time string to 12-hour format (e.g., "20:00" -> "8:00 PM")
         time_12h = self.time_to_12h(time)
+        time_clicked = False
 
-        # Wait for the time slot button to be visible and interactive
-        time_selector = f'a[title="{time_12h}"]'
         try:
-            self.page.wait_for_selector(time_selector, state="visible", timeout=5000)
-            self.page.click(time_selector)
-            print(f"Clicked time slot button for {time_12h}")
-            time_clicked = True
-            # Wait for the page to load after clicking the time slot
-            self.page.wait_for_load_state("networkidle")
-        except Exception as e:
-            print(f"Could not select time slot {time_12h}: {e}")
-            return False
+            # Wait for time slot buttons to be available using the new selector
+            self.page.wait_for_selector('ul[data-test="time-slots"] li[data-test^="time-slot-"] div[role="button"]', state="visible", timeout=5000)
+            
+            # Get all available time slots
+            time_slots = self.page.query_selector_all('ul[data-test="time-slots"] li[data-test^="time-slot-"] div[role="button"]')
+            
+            # Iterate through time slots to find matching time
+            for slot in time_slots:
+                slot_text = slot.inner_text().strip()
+                if slot_text == time_12h:
+                    slot.click()
+                    logger.info(f"Clicked time slot button for {time_12h}")
+                    time_clicked = True
+                    # Wait for the page to load after clicking the time slot
+                    self.page.wait_for_load_state("networkidle")
+                    break
+            
+            if not time_clicked:
+                logger.error(f"Could not find time slot for {time_12h}")
+                return False
 
-        if time_clicked:
-            # Wait for the phone input to be visible and interactive
-            phone_input = self.page.query_selector('input[name="phone"]')
-            if phone_input:
-                phone_input.fill(phone)
-                print(f"Inputted phone: {phone}")
-        
             return True
+
+        except Exception as e:
+            logger.error(f"Error during reservation confirmation: {str(e)}")
+            return False
         
     def input_info(self, phone: str, email: str) -> bool:
         """
@@ -385,6 +392,9 @@ class OpenTableBooker:
         try:
             # Try multiple selectors for the verification code input field
             verification_selectors = [
+                'input#emailVerificationCode',
+                'input[class*="G4xP4u7F-JU-"]',
+                'input[aria-label="Enter verification code"]',
                 'input[placeholder*="verification code" i]',
                 'input[id*="verificationCode" i]',
                 'input[name*="verification" i]',
@@ -527,7 +537,7 @@ if __name__ == "__main__":
         "date": "June,16,2025",
         "time": "20:00",
         "party_size": 5,
-        "phone": "1234567890",
+        "phone": "2135140836",
         "email": "test@test.com",
         "verification_code": "123456"
     }
