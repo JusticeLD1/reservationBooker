@@ -93,7 +93,7 @@ def main():
     required_files = [
         "app.py",
         "parse_reservation.py",
-        "reservationStream/book_opentable.py",
+        "book_opentable.py",
         "database.py",
         "auth.py"
     ]
