@@ -377,6 +377,79 @@ class OpenTableBooker:
         except Exception as e:
             logger.error(f"Error in reservation process: {str(e)}")
             return False
+        
+    def input_verification_code(self, code: str) -> bool:
+        """
+        Input the verification code into the reservation form
+        """
+        try:
+            # Try multiple selectors for the verification code input field
+            verification_selectors = [
+                'input[placeholder*="verification code" i]',
+                'input[id*="verificationCode" i]',
+                'input[name*="verification" i]',
+                'input[type="text"][aria-label*="verification" i]',
+                '#verification-code-input',
+                'input[class*="verification" i]'
+            ]
+            
+            code_input = None
+            for selector in verification_selectors:
+                try:
+                    code_input = self.page.wait_for_selector(selector, state='visible', timeout=5000)
+                    if code_input:
+                        logger.info(f"Found verification input using selector: {selector}")
+                        break
+                except Exception as e:
+                    logger.debug(f"Selector {selector} not found: {str(e)}")
+                    continue
+            
+            if not code_input:
+                logger.error("Could not find verification code input field")
+                return False
+            
+            # Clear any existing input and fill in the verification code
+            code_input.fill("")  # Clear existing input
+            code_input.fill(code)
+            logger.info("Successfully input verification code")
+            
+            # Try to find and click the continue button
+            continue_selectors = [
+                'button:has-text("Continue")',
+                'button[type="submit"]',
+                'button[class*="continue" i]',
+                'button[class*="submit" i]',
+                'button[aria-label*="continue" i]'
+            ]
+            
+            continue_button = None
+            for selector in continue_selectors:
+                try:
+                    continue_button = self.page.wait_for_selector(selector, state='visible', timeout=5000)
+                    if continue_button:
+                        logger.info(f"Found continue button using selector: {selector}")
+                        break
+                except Exception as e:
+                    logger.debug(f"Continue button selector {selector} not found: {str(e)}")
+                    continue
+            
+            if continue_button:
+                continue_button.click()
+                logger.info("Clicked continue button")
+            else:
+                # If no continue button found, try pressing Enter
+                code_input.press("Enter")
+                logger.info("Pressed Enter key on verification input")
+            
+            # Wait for the page to load after submission
+            self.page.wait_for_load_state('networkidle')
+            time.sleep(2)  # Small delay to ensure submission is processed
+            
+            return True
+
+        except Exception as e:
+            logger.error(f"Error in verification code process: {str(e)}")
+            return False
 
 def book_reservation(data: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -409,17 +482,23 @@ def book_reservation(data: Dict[str, Any]) -> Dict[str, Any]:
             if booking_confirmation:
                 info_inputted = booker.input_info(data["phone"], data["email"])
                 if info_inputted:
-                    return {
-                        "success": True,
-                        "message": "Reservation booked successfully"
-                    }
+                    verification = booker.input_verification_code(data["verification_code"])
+                    if verification:
+                        return {
+                            "success": True,
+                            "message": "Reservation booked successfully"
+                        }
+                    else:
+                        return {
+                            "success": False,
+                            "error": "Failed to input verification code"
+                        }
                 else:
                     return {
                         "success": False,
                         "error": "Failed to input phone and email"
                     }
             else:
-                return book_resy(data)
                 return {
                     "success": False,
                     "error": "Failed to confirm reservation"
@@ -443,13 +522,14 @@ def book_reservation(data: Dict[str, Any]) -> Dict[str, Any]:
 # Example usage
 if __name__ == "__main__":
     test_data = {
-        "restaurant": "didi75ei",
+        "restaurant": "Katana",
         "location": "Los Angeles",
         "date": "June,16,2025",
         "time": "20:00",
         "party_size": 5,
         "phone": "1234567890",
-        "email": "test@test.com"
+        "email": "test@test.com",
+        "verification_code": "123456"
     }
     print(book_reservation(test_data))
     #book_reservation_testing(test_data)
