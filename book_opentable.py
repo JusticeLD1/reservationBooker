@@ -389,20 +389,29 @@ class OpenTableBooker:
         """
         Input the verification code into the reservation form
         """
+        logger.info(f"Inputting verification code: {code}")
+        # Try to take a screenshot immediately, regardless of page state
         try:
-            # Try multiple selectors for the verification code input field
+            self.page.screenshot(path="force_screenshot.png")
+            logger.info("Force screenshot taken, regardless of page load state.")
+        except Exception as e:
+            logger.error(f"Failed to take force screenshot: {e}")
+        try:
+            # Wait for the page to be fully loaded and body to be visible
+            try:
+                self.page.wait_for_load_state('networkidle', timeout=15000)
+                self.page.wait_for_selector('body', state='visible', timeout=5000)
+                self.page.screenshot(path="verification_code_called.png")
+                logger.info("Screenshot taken immediately upon entering input_verification_code.")
+            except Exception as e:
+                logger.error(f"Failed to take initial screenshot: {e}")
+
+            # Use only the most reliable selectors: data-test and id
             verification_selectors = [
-                'input#emailVerificationCode',
-                'input[class*="G4xP4u7F-JU-"]',
-                'input[aria-label="Enter verification code"]',
-                'input[placeholder*="verification code" i]',
-                'input[id*="verificationCode" i]',
-                'input[name*="verification" i]',
-                'input[type="text"][aria-label*="verification" i]',
-                '#verification-code-input',
-                'input[class*="verification" i]'
+                'input[data-test="verification-code-input"]',
+                '#emailVerificationCode'
             ]
-            
+
             code_input = None
             for selector in verification_selectors:
                 try:
@@ -413,16 +422,20 @@ class OpenTableBooker:
                 except Exception as e:
                     logger.debug(f"Selector {selector} not found: {str(e)}")
                     continue
-            
+
             if not code_input:
                 logger.error("Could not find verification code input field")
                 return False
-            
-            # Clear any existing input and fill in the verification code
-            code_input.fill("")  # Clear existing input
-            code_input.fill(code)
+
+            code_input.fill(code, force=True)
             logger.info("Successfully input verification code")
-            
+
+            try:
+                self.page.screenshot(path="verification_code_filled.png")
+                logger.info("Screenshot taken after filling verification code.")
+            except Exception as e:
+                logger.error(f"Failed to take filled screenshot: {e}")
+
             # Try to find and click the continue button
             continue_selectors = [
                 'button:has-text("Continue")',
@@ -431,7 +444,7 @@ class OpenTableBooker:
                 'button[class*="submit" i]',
                 'button[aria-label*="continue" i]'
             ]
-            
+
             continue_button = None
             for selector in continue_selectors:
                 try:
@@ -442,7 +455,7 @@ class OpenTableBooker:
                 except Exception as e:
                     logger.debug(f"Continue button selector {selector} not found: {str(e)}")
                     continue
-            
+
             if continue_button:
                 continue_button.click()
                 logger.info("Clicked continue button")
@@ -450,11 +463,11 @@ class OpenTableBooker:
                 # If no continue button found, try pressing Enter
                 code_input.press("Enter")
                 logger.info("Pressed Enter key on verification input")
-            
+
             # Wait for the page to load after submission
             self.page.wait_for_load_state('networkidle')
             time.sleep(2)  # Small delay to ensure submission is processed
-            
+
             return True
 
         except Exception as e:
