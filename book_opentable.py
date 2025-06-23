@@ -18,6 +18,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger("opentable_booking")
 
+# Global booker instance to maintain browser session
+_global_booker = None
+
 class OpenTableBooker:
     BASE_URL = "https://www.opentable.com"
     
@@ -373,6 +376,7 @@ class OpenTableBooker:
                     
                     # Wait for the page to load after clicking
                     self.page.wait_for_load_state('networkidle')
+                  
                     time.sleep(15)  # Additional small delay to ensure page loads completely
                     return True
                 else:
@@ -388,91 +392,69 @@ class OpenTableBooker:
     def input_verification_code(self, code: str) -> bool:
         """
         Input the verification code into the reservation form
+        The verification form appears inside an iframe that loads dynamically
         """
         logger.info(f"Inputting verification code: {code}")
-        # Try to take a screenshot immediately, regardless of page state
+        
         try:
-            self.page.screenshot(path="force_screenshot.png")
-            logger.info("Force screenshot taken, regardless of page load state.")
-        except Exception as e:
-            logger.error(f"Failed to take force screenshot: {e}")
-        try:
-            # Wait for the page to be fully loaded and body to be visible
+            # Wait for the iframe to be attached to the DOM and visible
+            logger.info("Waiting for verification iframe to load...")
+            self.page.wait_for_selector('#authenticationModalIframe', state='visible', timeout=15000)
+            
+            # Create frame locator for the iframe
+            frame_locator = self.page.frame_locator('#authenticationModalIframe')
+            logger.info("Verification iframe found and ready")
+            
+            # Wait for the verification input field to be visible and enabled within the iframe
+            logger.info("Waiting for verification input field to be ready...")
+            code_input_locator = frame_locator.locator('#emailVerificationCode')
+            code_input_locator.wait_for(state='visible', timeout=10000)
+            
+            # Optional: Take a targeted screenshot of the iframe for debugging
             try:
-                self.page.wait_for_load_state('networkidle', timeout=15000)
-                self.page.wait_for_selector('body', state='visible', timeout=5000)
-                self.page.screenshot(path="verification_code_called.png")
-                logger.info("Screenshot taken immediately upon entering input_verification_code.")
+                iframe_element = self.page.query_selector('#authenticationModalIframe')
+                if iframe_element:
+                    iframe_element.screenshot(path="verification_iframe_debug.png")
+                    logger.info("Debug screenshot of iframe taken")
             except Exception as e:
-                logger.error(f"Failed to take initial screenshot: {e}")
-
-            # Use only the most reliable selectors: data-test and id
-            verification_selectors = [
-                'input[data-test="verification-code-input"]',
-                '#emailVerificationCode'
-            ]
-
-            code_input = None
-            for selector in verification_selectors:
-                try:
-                    code_input = self.page.wait_for_selector(selector, state='visible', timeout=5000)
-                    if code_input:
-                        logger.info(f"Found verification input using selector: {selector}")
-                        break
-                except Exception as e:
-                    logger.debug(f"Selector {selector} not found: {str(e)}")
-                    continue
-
-            if not code_input:
-                logger.error("Could not find verification code input field")
-                return False
-
-            code_input.fill(code, force=True)
-            logger.info("Successfully input verification code")
-
-            try:
-                self.page.screenshot(path="verification_code_filled.png")
-                logger.info("Screenshot taken after filling verification code.")
-            except Exception as e:
-                logger.error(f"Failed to take filled screenshot: {e}")
-
-            # Try to find and click the continue button
-            continue_selectors = [
-                'button:has-text("Continue")',
-                'button[type="submit"]',
-                'button[class*="continue" i]',
-                'button[class*="submit" i]',
-                'button[aria-label*="continue" i]'
-            ]
-
-            continue_button = None
-            for selector in continue_selectors:
-                try:
-                    continue_button = self.page.wait_for_selector(selector, state='visible', timeout=5000)
-                    if continue_button:
-                        logger.info(f"Found continue button using selector: {selector}")
-                        break
-                except Exception as e:
-                    logger.debug(f"Continue button selector {selector} not found: {str(e)}")
-                    continue
-
-            if continue_button:
-                continue_button.click()
-                logger.info("Clicked continue button")
-            else:
-                # If no continue button found, try pressing Enter
-                code_input.press("Enter")
-                logger.info("Pressed Enter key on verification input")
-
-            # Wait for the page to load after submission
+                logger.debug(f"Could not take iframe debug screenshot: {e}")
+            
+            # Fill the verification code
+            code_input_locator.fill(code)
+            logger.info("Successfully input verification code in iframe")
+            
+            # Wait for the page to load after input
             self.page.wait_for_load_state('networkidle')
-            time.sleep(2)  # Small delay to ensure submission is processed
-
+            time.sleep(1)  # Small delay to ensure input is processed
+            
             return True
 
         except Exception as e:
-            logger.error(f"Error in verification code process: {str(e)}")
+            logger.error(f"Error in input_verification_code: {str(e)}")
+            
+            # Take a full-page screenshot for debugging on failure
+            try:
+                self.page.screenshot(path="verification_error_screenshot.png")
+                logger.info("Error screenshot taken for debugging")
+            except Exception as screenshot_error:
+                logger.error(f"Failed to take error screenshot: {screenshot_error}")
+            
             return False
+
+def get_global_booker() -> OpenTableBooker:
+    """Get the global booker instance, creating it if it doesn't exist"""
+    global _global_booker
+    if _global_booker is None:
+        _global_booker = OpenTableBooker(headless=False)
+        _global_booker.start()
+    return _global_booker
+
+def close_global_booker() -> None:
+    """Close the global booker instance"""
+    global _global_booker
+    if _global_booker is not None:
+        _global_booker.close()
+        _global_booker = None
 
 def book_reservation(data: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -490,9 +472,8 @@ def book_reservation(data: Dict[str, Any]) -> Dict[str, Any]:
                 "error": f"Missing required field: {field}"
             }
     
-    booker = OpenTableBooker(headless=False)
+    booker = get_global_booker()  # Use global booker instance
     try:
-        booker.start()
         restaurant_url = booker.search_restaurant(
             restaurant_name=data["restaurant"],
             location=data["location"],
@@ -505,22 +486,24 @@ def book_reservation(data: Dict[str, Any]) -> Dict[str, Any]:
             if booking_confirmation:
                 info_inputted = booker.input_info(data["phone"], data["email"])
                 if info_inputted:
-                    verification = booker.input_verification_code(data["verification_code"])
-                    if verification:
-                        return {
-                            "success": True,
-                            "message": "Reservation booked successfully"
-                        }
+                    # Check if verification code is provided and handle it
+                    if "verification_code" in data and data["verification_code"]:
+                        verification_success = booker.input_verification_code(data["verification_code"])
+                        if verification_success:
+                            return {
+                                "success": True,
+                                "message": "Reservation booked successfully with verification"
+                            }
+                        else:
+                            return {
+                                "success": False,
+                                "error": "Failed to input verification code"
+                            }
                     else:
                         return {
-                            "success": False,
-                            "error": "Failed to input verification code"
+                            "success": True,
+                            "message": "Reservation booked successfully (verification code not provided)"
                         }
-                else:
-                    return {
-                        "success": False,
-                        "error": "Failed to input phone and email"
-                    }
             else:
                 return {
                     "success": False,
@@ -537,22 +520,57 @@ def book_reservation(data: Dict[str, Any]) -> Dict[str, Any]:
             "success": False,
             "error": str(e)
         }
-    finally:
-        booker.close()
 
-
+def add_code(code: str) -> Dict[str, Any]:
+    """
+    Add verification code to the current booking session.
+    This function can be called dynamically by the user after they receive the code.
+    """
+    try:
+        booker = get_global_booker()  # Use the same global booker instance
+        if booker.page is None:
+            return {
+                "success": False,
+                "error": "No active browser session. Please run book_reservation first."
+            }
+        
+        verification_success = booker.input_verification_code(code)
+        if verification_success:
+            return {
+                "success": True,
+                "message": "Verification code inputted successfully"
+            }
+        else:
+            return {
+                "success": False,
+                "error": "Failed to input verification code"
+            }
+    except Exception as e:
+        logger.error(f"Error in add_code: {str(e)}")
+        return {
+            "success": False,
+            "error": f"Error: {str(e)}"
+        }
 
 # Example usage
 if __name__ == "__main__":
     test_data = {
         "restaurant": "Katana",
         "location": "Los Angeles",
-        "date": "June,16,2025",
+        "date": "June,25,2025",
         "time": "20:00",
         "party_size": 5,
         "phone": "2135140836",
-        "email": "test@test.com",
-        "verification_code": "123456"
+        "email": "test@test.com"
+        # Note: verification_code is not included here - it will be added later via add_code()
     }
-    print(book_reservation(test_data))
-    #book_reservation_testing(test_data)
+    
+    # First, run the booking process
+    result = book_reservation(test_data)
+    print(result)
+    
+    # Later, when the user receives the verification code, they can call:
+    print(add_code("123456"))
+    
+    # When completely done, close the browser:
+    close_global_booker()
